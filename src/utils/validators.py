@@ -1,16 +1,16 @@
 """
 validators.py
-Objetivo:
-- Validacoes automaticas por camada (Bronze, Silver, Gold).
-- Fail-fast: se algo estiver errado, levanta ValueError com mensagem clara.
+Objective:
+- Automatic validations per layer (Bronze, Silver, Gold).
+- Fail-fast: raise ValueError with a clear message if something is wrong.
 
-Como usar:
-- Os scripts em scripts/validate_*.py chamam estas funcoes.
-- O run_pipeline.ps1 chama os validate_*.py ao final de cada etapa.
+Usage:
+- Scripts in scripts/validate_*.py call these functions.
+- run_pipeline.ps1 invokes the validate_*.py files at the end of each step.
 
-Por que isso e importante:
-- Voce descobre erro cedo (ex: schema errado na Silver).
-- Evita "pipeline verde" gerando dado errado.
+Why this matters:
+- Surface errors early (e.g. wrong schema in Silver).
+- Prevent a "green pipeline" producing bad data.
 """
 
 from __future__ import annotations
@@ -51,11 +51,11 @@ GOLD_REQUIRED_COLS: List[str] = [
 def validate_bronze(bronze_path: str) -> None:
     """
     Bronze:
-    - Arquivo deve existir
-    - Deve ser JSON valido
-    - Deve ser:
-        - dict com chave "issues" (list), OU
-        - lista direta
+    - File must exist
+    - Must be valid JSON
+    - Should be either:
+        - dict with key "issues" (list), OR
+        - direct list
     """
     p = Path(bronze_path)
     if not p.exists():
@@ -83,10 +83,10 @@ def validate_bronze(bronze_path: str) -> None:
 def validate_silver(silver_path: str) -> None:
     """
     Silver:
-    - Arquivo deve existir
-    - Deve conter colunas obrigatorias
-    - created nao pode ser null (campo obrigatorio)
-    - issue_id nao deve ter duplicidade (quando preenchido)
+    - File must exist
+    - Must contain required columns
+    - created cannot be null (mandatory field)
+    - issue_id should not have duplicates (when filled)
     """
     p = Path(silver_path)
     if not p.exists():
@@ -117,11 +117,11 @@ def validate_gold(
 ) -> None:
     """
     Gold:
-    - Arquivo deve existir
-    - Deve conter colunas obrigatorias
-    - Deve conter apenas status Done/Resolved
+    - File must exist
+    - Must contain required columns
+    - Should only contain status Done/Resolved
     - actual_hours >= 0
-    - Relatorios devem existir
+    - Reports must exist
     """
     gold_p = Path(gold_path)
     if not gold_p.exists():

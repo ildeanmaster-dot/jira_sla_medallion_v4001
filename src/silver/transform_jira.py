@@ -1,9 +1,9 @@
 """
 transform_jira.py (Silver)
-Objetivo:
-- Ler o JSON Bronze (copia fiel) e normalizar para uma tabela CSV "enxuta" focada em SLA.
+Objective:
+- Read Bronze JSON (faithful copy) and normalize into a "lean" CSV table focused on SLA.
 
-Contrato de saida (colunas):
+Output contract (columns):
 - issue_id
 - issue_key
 - created
@@ -13,18 +13,18 @@ Contrato de saida (colunas):
 - issue_type
 - assignee
 
-Regras:
-- Silver faz limpeza/normalizacao, mas NAO aplica regra de negocio de SLA (isso e Gold).
-- Deve ser robusto para JSON aninhado e campos ausentes.
-- created e obrigatorio: registros sem created devem ser ignorados.
-- Manter itens Open/Em andamento etc. (Gold filtra depois).
+Rules:
+- Silver does cleaning/normalization but DOES NOT apply SLA business rules (that is Gold).
+- Should be robust for nested JSON and missing fields.
+- created is mandatory: records without created should be ignored.
+- Keep Open/In progress items (Gold filters later).
 
-Entrada suportada (Bronze):
-- dict com chave "issues" (list)
-- ou list direta de issues
+Supported Bronze input:
+- dict with key "issues" (list)
+- or direct list of issues
 
-Observacao:
-- Evita pd.read_json para nao ter surpresas com schema.
+Note:
+- Avoid pd.read_json to prevent schema surprises.
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ import pandas as pd
 
 def _safe_get(obj: Any, path: List[Any]) -> Any:
     """
-    Acessa caminho em dict/list de forma defensiva.
-    path pode ter chaves (str) e indices (int).
-    Retorna None se nao conseguir navegar.
+    Safely access a path in a dict/list structure.
+    path may contain keys (str) and indices (int).
+    Returns None if navigation fails.
     """
     cur = obj
     for p in path:
@@ -65,8 +65,8 @@ def _first_non_null(*values: Any) -> Any:
 
 def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Extrai uma linha normalizada de 1 issue.
-    Retorna None se created for invalido/ausente.
+    Extract a normalized row from a single issue.
+    Returns None if created is invalid/missing.
     """
     issue_id = _first_non_null(
         _safe_get(issue, ["id"]),
@@ -96,7 +96,7 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _safe_get(issue, ["fields", "issue_type"]),
     )
 
-    # Assignee pode vir como dict, string, ou lista (no seu schema custom)
+    # Assignee may come as dict, string, or list (in custom schema)
     assignee_name = _first_non_null(
         _safe_get(issue, ["assignee", "name"]),
         _safe_get(issue, ["assignee", "displayName"]),
@@ -108,7 +108,7 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _safe_get(issue, ["assignee", 0, "email"]),
     )
 
-    # Timestamps (schema custom do seu desafio): timestamps[0].created_at / resolved_at
+    # Timestamps (custom schema of the challenge): timestamps[0].created_at / resolved_at
     created = _first_non_null(
         _safe_get(issue, ["timestamps", 0, "created_at"]),
         _safe_get(issue, ["created"]),
@@ -122,7 +122,7 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _safe_get(issue, ["fields", "resolved"]),
     )
 
-    # created e obrigatorio para SLA
+    # created is mandatory for SLA
     if created is None:
         return None
 
@@ -145,10 +145,10 @@ def transform_jira(
     silver_path: str = "data/silver/silver_jira.csv",
 ) -> str:
     """
-    Executa a transformacao Silver:
-    - Le Bronze JSON
-    - Extrai linhas normalizadas
-    - Salva CSV Silver
+    Execute the Silver transformation:
+    - Read Bronze JSON
+    - Extract normalized rows
+    - Save Silver CSV
     """
     bronze_p = Path(bronze_path)
     if not bronze_p.exists():
@@ -174,7 +174,7 @@ def transform_jira(
 
     df = pd.DataFrame(rows)
 
-    # Padroniza colunas esperadas (mesmo se vier vazio)
+    # Ensure expected columns exist (even if empty)
     expected_cols = [
         "issue_id",
         "issue_key",

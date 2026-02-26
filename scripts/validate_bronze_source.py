@@ -1,6 +1,6 @@
 """
 validate_bronze_source.py
-Valida se o Bronze veio do Azure Blob ou do fallback local.
+Validate whether Bronze came from Azure Blob or local fallback.
 """
 
 from __future__ import annotations

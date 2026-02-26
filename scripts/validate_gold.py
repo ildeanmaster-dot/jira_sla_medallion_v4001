@@ -1,13 +1,13 @@
 """
 validate_gold.py
-Objetivo:
-- Validar artefatos Gold:
+Objective:
+- Validate Gold artifacts:
   - gold_jira_sla.csv
   - gold_sla_by_analyst.csv
-  - gold_sla_by_type.csv (ou gold_sla_by_issue_type.csv)
-- Usa as regras centralizadas em src/utils/validators.py
+  - gold_sla_by_type.csv (or gold_sla_by_issue_type.csv)
+- Use centralized rules in src/utils/validators.py
 
-Uso:
+Usage:
   python .\\scripts\\validate_gold.py
 """
 

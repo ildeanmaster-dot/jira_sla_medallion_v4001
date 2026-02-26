@@ -1,10 +1,10 @@
 """
 validate_silver.py
-Objetivo:
-- Validar o artefato Silver (data/silver/silver_jira.csv)
-- Usa as regras do src/utils/validators.py
+Objective:
+- Validate the Silver artifact (data/silver/silver_jira.csv)
+- Use rules from src/utils/validators.py
 
-Uso:
+Usage:
   python .\\scripts\\validate_silver.py
 """
 

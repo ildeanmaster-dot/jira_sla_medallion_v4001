@@ -1,16 +1,16 @@
 """
 holiday_api.py
-Objetivo:
-- Centralizar a obtencao de feriados nacionais do Brasil.
-- Retornar um set(date) para ser consumido pelo calculo de SLA.
+Objective:
+- Centralize retrieval of Brazilian national holidays.
+- Return a set(date) to be consumed by the SLA calculation.
 
-Por que existe:
-- Evita duplicar logica de feriados em varios lugares.
-- Permite trocar biblioteca/API no futuro com impacto minimo.
+Why it exists:
+- Avoids duplicating holiday logic in multiple places.
+- Allows swapping out the library/API later with minimal impact.
 
-Observacao:
-- Aqui usamos a biblioteca 'holidays' (offline).
-- Se no futuro voce quiser uma API publica, troca so este modulo.
+Note:
+- This uses the 'holidays' library (offline).
+- If a public API is desired later, only this module needs to change.
 """
 
 from __future__ import annotations
@@ -23,14 +23,14 @@ import holidays
 
 def get_br_holidays(years: Iterable[int]) -> Set[date]:
     """
-    Retorna um conjunto de datas (date) com os feriados nacionais do Brasil
-    para os anos informados.
+    Returns a set of dates representing Brazilian national holidays
+    for the provided years.
 
-    Parametros:
-    - years: iterable de anos (ex: [2024, 2025, 2026])
+    Parameters:
+    - years: iterable of years (e.g. [2024, 2025, 2026])
 
-    Retorno:
-    - set(date): datas de feriados nacionais
+    Returns:
+    - set(date): national holiday dates
     """
     years_list = sorted(set(int(y) for y in years))
     br = holidays.Brazil(years=years_list)

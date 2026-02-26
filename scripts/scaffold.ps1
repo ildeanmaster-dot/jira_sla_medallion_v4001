@@ -1,15 +1,15 @@
 # ================================================================
 # SCRIPT: scaffold.ps1
-# OBJETIVO:
-# - Criar a estrutura do projeto Medallion (Bronze/Silver/Gold)
-# - Criar arquivos vazios (placeholders). NAO preencher conteudo.
-# POR QUE:
-# - Separar "estrutura" de "conteudo" facilita versionamento e revisao
+# OBJECTIVE:
+# - Create the Medallion project structure (Bronze/Silver/Gold)
+# - Create empty placeholder files. DO NOT fill content.
+# WHY:
+# - Separating "structure" from "content" aids versioning and review
 # ================================================================
 
 Write-Host "Starting scaffold..."
 
-# 1) Pastas do projeto
+# 1) Project folders
 $folders = @(
     "data/raw",
     "data/bronze",
@@ -30,7 +30,7 @@ foreach ($folder in $folders) {
     }
 }
 
-# 2) Arquivos vazios (placeholders)
+# 2) Empty files (placeholders)
 $files = @(
     "src/bronze/__init__.py",
     "src/silver/__init__.py",
@@ -62,7 +62,7 @@ foreach ($file in $files) {
     }
 }
 
-# 3) JSON fallback (exemplo minimo)
+# 3) JSON fallback (minimal example)
 $rawJsonPath = "data/raw/jira_issues_raw.json"
 if (-not (Test-Path $rawJsonPath)) {
 @"

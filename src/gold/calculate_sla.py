@@ -1,23 +1,23 @@
 """
 calculate_sla.py (Gold)
-Objetivo:
-- Ler Silver (CSV normalizado)
-- Filtrar apenas issues Done/Resolved com resolved preenchido
-- Calcular SLA em horas uteis (actual_hours)
-- Mapear SLA esperado por prioridade:
+Objective:
+- Read Silver (normalized CSV)
+- Filter only Done/Resolved issues with resolved filled
+- Calculate SLA in business hours (actual_hours)
+- Map expected SLA by priority:
     High   -> 24
     Medium -> 72
     Low    -> 120
-- Gerar tabela Gold final:
+- Produce final Gold table:
     data/gold/gold_jira_sla.csv
-- Gerar relatorios agregados:
+- Produce aggregated reports:
     data/gold/gold_sla_by_analyst.csv
     data/gold/gold_sla_by_type.csv
-    data/gold/gold_sla_by_issue_type.csv  (nome canonico + compat runner)
+    data/gold/gold_sla_by_issue_type.csv  (canonical name + runner compatibility)
 
-Observacoes:
-- Gold e onde entram as regras de negocio (SLA e filtro Done/Resolved).
-- Parsing defensivo e normalizacao minima de strings.
+Notes:
+- Gold is where business rules enter (SLA and Done/Resolved filter).
+- Defensive parsing and minimal string normalization.
 """
 
 from __future__ import annotations
@@ -51,13 +51,13 @@ def _norm_priority(p: str) -> str:
         return "medium"
     if s in {"lowest", "low"}:
         return "low"
-    # fallback padrao do desafio
+    # default fallback per challenge
     return "low"
 
 
 def _to_float_hours(val) -> float:
     """
-    Garante retorno escalar float, mesmo que venha algo estranho.
+    Ensure a scalar float return, even if input is odd.
     """
     try:
         return float(val)
@@ -78,7 +78,7 @@ def calculate_sla(
 
     df = pd.read_csv(silver_p)
 
-    # Validacao minima de colunas esperadas (contrato Silver)
+    # Minimal validation of expected columns (Silver contract)
     required = [
         "issue_id",
         "issue_key",
@@ -93,18 +93,18 @@ def calculate_sla(
     if missing:
         raise ValueError(f"Silver missing required columns: {missing}")
 
-    # Normalizacao defensiva
+    # Defensive normalization
     df["status"] = df["status"].astype(str).str.strip()
     df["priority"] = df["priority"].astype(str).str.strip()
     df["issue_type"] = df["issue_type"].astype(str).str.strip()
     df["assignee"] = df["assignee"].astype(str).str.strip()
 
-    # Filtro Gold: apenas Done/Resolved com resolved preenchido
+    # Gold filter: only Done/Resolved with resolved filled
     df = df[df["status"].isin(["Done", "Resolved"])].copy()
     df = df[df["resolved"].notna() & (df["resolved"].astype(str).str.strip() != "")].copy()
 
     if df.empty:
-        # Ainda gera arquivos para pipeline nao quebrar, mas informa claramente
+        # Still generate files so pipeline doesn't break, but clearly notify
         out_p = Path(gold_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
         df_out = pd.DataFrame(columns=[
@@ -131,20 +131,20 @@ def calculate_sla(
         print("[GOLD] No Done/Resolved rows with resolved date. Generated empty outputs.")
         return str(out_p)
 
-    # Calculo de SLA (horas uteis)
+    # SLA calculation (business hours)
     def _calc_row(r) -> float:
         return _to_float_hours(calculate_business_hours(_norm_str(r["created"]), _norm_str(r["resolved"])))
 
     df["actual_hours"] = df.apply(_calc_row, axis=1)
 
-    # SLA esperado por prioridade
+    # Expected SLA by priority
     df["priority_norm"] = df["priority"].apply(_norm_priority)
     df["sla_expected_hours"] = df["priority_norm"].map(lambda x: SLA_BY_PRIORITY.get(x, 120.0)).astype(float)
 
-    # SLA atendido
+    # SLA met
     df["is_sla_met"] = df["actual_hours"] <= df["sla_expected_hours"]
 
-    # Seleciona colunas finais (contrato Gold)
+    # Select final columns (Gold contract)
     df_final = df[
         [
             "issue_id",
@@ -161,12 +161,12 @@ def calculate_sla(
         ]
     ].copy()
 
-    # Persistencia Gold
+    # Persist Gold
     gold_p = Path(gold_path)
     gold_p.parent.mkdir(parents=True, exist_ok=True)
     df_final.to_csv(gold_p, index=False)
 
-    # Relatorio por analista (assignee)
+    # Report by analyst (assignee)
     by_analyst = (
         df_final.groupby("assignee", dropna=False)
         .agg(
@@ -178,7 +178,7 @@ def calculate_sla(
     by_analyst["avg_actual_hours"] = by_analyst["avg_actual_hours"].round(2)
     by_analyst["sla_met_rate"] = (by_analyst["sla_met_rate"] * 100).round(2)
 
-    # Relatorio por tipo
+    # Report by type
     by_type = (
         df_final.groupby("issue_type", dropna=False)
         .agg(

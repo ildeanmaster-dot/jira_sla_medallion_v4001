@@ -1,32 +1,23 @@
 """
 azure_blob.py
-Objetivo:
-- Baixar JSON bruto do Azure Blob Storage (somente leitura) usando Service Principal.
-- Carregar variaveis via dotenv (.env).
-- Fazer fallback automatico para JSON local em data/raw/jira_issues_raw.json em caso de falha.
+Objective:
+- Download raw JSON from Azure Blob Storage (read-only) using a Service Principal.
+- Automatically fall back to local JSON at data/raw/jira_issues_raw.json on failure.
+- Also return the data source (AZURE_BLOB or LOCAL_FALLBACK) for auditing.
 
-Cenarios suportados:
-1) Execucao local sem Azure (offline):
-   - Se faltar variavel de ambiente, le o JSON local (fallback) e segue o pipeline.
+Returns:
+- tuple(payload: dict, source: str)
 
-2) Execucao com Azure:
-   - Autentica via AAD (ClientSecretCredential)
-   - Conecta no Blob e baixa o JSON
+source:
+- "AZURE_BLOB"       -> successfully downloaded from Azure
+- "LOCAL_FALLBACK"   -> read from local file (due to missing config or network/ssl/permission issue)
 
-3) Ambiente corporativo com inspecao TLS (proxy):
-   - Se a rede injeta certificado (self-signed na cadeia), voce precisa confiar no CA raiz corporativo.
-   - Para isso, defina AZURE_CA_BUNDLE no .env apontando para um .pem/.crt valido.
-   - O transporte RequestsTransport vai usar esse CA para validar SSL.
-
-Variaveis esperadas (.env):
+Env vars (.env):
 - AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
-- AZURE_STORAGE_ACCOUNT (nome OU host completo)
+- AZURE_STORAGE_ACCOUNT (name OR full host)
 - AZURE_STORAGE_CONTAINER
-- AZURE_STORAGE_BLOB (opcional; default jira_issues_raw.json)
-- AZURE_CA_BUNDLE (opcional; ex: C:\\Certs\\corp-root-ca.pem)
-
-Seguranca:
-- Nao versionar .env (mantido no .gitignore)
+- AZURE_STORAGE_BLOB (optional; default jira_issues_raw.json)
+- AZURE_CA_BUNDLE (optional; e.g. C:\\Certs\\corp-root-ca.pem)
 """
 
 from __future__ import annotations
@@ -34,7 +25,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 from dotenv import load_dotenv
 from azure.identity import ClientSecretCredential
@@ -43,27 +34,13 @@ from azure.core.pipeline.transport import RequestsTransport
 
 
 def _read_local_fallback(local_path: Path) -> Dict[str, Any]:
-    """
-    Le o JSON local de fallback.
-    Se nao existir, retorna estrutura minima valida.
-    """
     if not local_path.exists():
         return {"issues": []}
-
     with local_path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _normalize_storage_account(account_value: str) -> str:
-    """
-    Aceita:
-    - stfasttracksdev
-    - stfasttracksdev.blob.core.windows.net
-    - https://stfasttracksdev.blob.core.windows.net
-
-    Retorna:
-    - stfasttracksdev
-    """
     s = str(account_value).strip().lower()
     s = s.replace("https://", "").replace("http://", "")
     s = s.replace(".blob.core.windows.net", "")
@@ -73,11 +50,9 @@ def _normalize_storage_account(account_value: str) -> str:
 
 def download_blob_json(
     local_fallback_path: str = "data/raw/jira_issues_raw.json",
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], str]:
     """
-    Tenta baixar JSON do Azure Blob.
-    Se falhar por qualquer motivo (rede, proxy, permissao, credencial),
-    retorna JSON local (fallback).
+    Returns (payload, source).
     """
     load_dotenv()
 
@@ -91,9 +66,9 @@ def download_blob_json(
     container = os.getenv("AZURE_STORAGE_CONTAINER")
     blob_name = os.getenv("AZURE_STORAGE_BLOB", "jira_issues_raw.json")
 
-    # Se faltou config, nao tenta Azure
+    # If config is missing, don't even try Azure
     if not all([tenant_id, client_id, client_secret, account, container]):
-        return _read_local_fallback(local_path)
+        return _read_local_fallback(local_path), "LOCAL_FALLBACK"
 
     try:
         credential = ClientSecretCredential(
@@ -105,16 +80,14 @@ def download_blob_json(
         account_name = _normalize_storage_account(account)
         account_url = f"https://{account_name}.blob.core.windows.net"
 
-        # Suporte a CA corporativo para SSL (proxy TLS)
         ca_bundle = os.getenv("AZURE_CA_BUNDLE")
         verify_value: object = True
 
+        # If a custom CA bundle is provided, validate its existence and use it
         if ca_bundle and ca_bundle.strip():
             ca_path = ca_bundle.strip()
             if not os.path.exists(ca_path):
-                # Se CA bundle foi informado mas nao existe, melhor falhar para cair no fallback
-                return _read_local_fallback(local_path)
-
+                return _read_local_fallback(local_path), "LOCAL_FALLBACK"
             verify_value = ca_path
 
         transport = RequestsTransport(connection_verify=verify_value)
@@ -129,8 +102,7 @@ def download_blob_json(
         raw_bytes = blob_client.download_blob().readall()
 
         payload = json.loads(raw_bytes.decode("utf-8"))
-        return payload
+        return payload, "AZURE_BLOB"
 
     except Exception:
-        # Fallback resiliente (offline / credencial / proxy / permissao / rede)
-        return _read_local_fallback(local_path)
+        return _read_local_fallback(local_path), "LOCAL_FALLBACK"

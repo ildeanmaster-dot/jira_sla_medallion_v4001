@@ -1,22 +1,22 @@
 """
 date_utils.py
-Objetivo:
-- Calcular horas uteis entre duas datas (ISO) em UTC.
-- Excluir fins de semana (sabado/domingo) e feriados nacionais do Brasil.
+Objective:
+- Calculate business hours between two ISO dates in UTC.
+- Exclude weekends (Saturday/Sunday) and Brazilian national holidays.
 
-Definicao de "horas uteis" neste projeto:
-- Considera TODOS os minutos do dia quando for dia util (nao limita 09:00-18:00).
+Definition of "business hours" in this project:
+- Counts ALL minutes of a business day (not limited to 09:00-18:00).
 
-Regras de robustez:
-- Parsing defensivo:
-  - Remove 'Z' ao final
-  - datetime.fromisoformat
-  - Se vier sem timezone, assume UTC
-- Se end < start ou parsing falhar, retorna 0.0
-- Contagem minuto a minuto (deterministica)
+Robustness rules:
+- Defensive parsing:
+  - Remove trailing 'Z'
+  - Use datetime.fromisoformat
+  - If naive datetime, assume UTC
+- If end < start or parsing fails, return 0.0
+- Minute-by-minute counting (deterministic)
 
-Dependencia:
-- src/utils/holiday_api.py (funcao get_br_holidays)
+Dependency:
+- src/utils/holiday_api.py (get_br_holidays function)
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _parse_iso_utc(dt_str: str) -> Optional[datetime]:
     except Exception:
         return None
 
-    # Se vier naive, assume UTC
+    # If naive datetime, assume UTC
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     else:
@@ -75,8 +75,8 @@ def _normalize_range(start_date: str, end_date: str) -> Optional[ParsedDateRange
 
 def calculate_business_hours(start_date: str, end_date: str) -> float:
     """
-    Retorna horas uteis entre start_date e end_date (strings ISO).
-    Exclui fins de semana e feriados nacionais do Brasil.
+    Returns business hours between start_date and end_date (ISO strings).
+    Excludes weekends and Brazilian national holidays.
     """
     rng = _normalize_range(start_date, end_date)
     if rng is None:
@@ -94,7 +94,7 @@ def calculate_business_hours(start_date: str, end_date: str) -> float:
     while current < end_dt:
         current_date = current.date()
 
-        is_weekend = current.weekday() >= 5  # 5=sab, 6=dom
+        is_weekend = current.weekday() >= 5  # 5=Sat, 6=Sun
         is_holiday = current_date in br_holidays
 
         if (not is_weekend) and (not is_holiday):

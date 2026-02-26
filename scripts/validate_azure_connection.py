@@ -1,17 +1,17 @@
 """
 validate_azure_connection.py
-Objetivo:
-- Validar conexao com Azure Blob Storage usando Service Principal (ClientSecretCredential)
-- Validar variaveis de ambiente (.env via dotenv)
-- Validar autenticacao AAD (obter token)
-- Validar acesso ao blob (exists + download parcial)
+Objective:
+- Validate connection to Azure Blob Storage using Service Principal (ClientSecretCredential)
+- Validate environment variables (.env via dotenv)
+- Validate AAD authentication (obtain token)
+- Validate blob access (exists + partial download)
 
-Uso:
+Usage:
   python .\scripts\validate_azure_connection.py
 
-Saidas:
-- Exit code 0: sucesso
-- Exit code 1: falha (mensagem clara)
+Outputs:
+- Exit code 0: success
+- Exit code 1: failure (clear message)
 """
 
 from __future__ import annotations
