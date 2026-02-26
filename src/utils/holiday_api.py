@@ -1,37 +1,68 @@
 """
 holiday_api.py
-Objective:
-- Centralize retrieval of Brazilian national holidays.
-- Return a set(date) to be consumed by the SLA calculation.
+Purpose:
+- Fetch Brazilian national holidays from a PUBLIC API (compliance requirement).
+- Return a set(date) for SLA/business-hours calculations.
+- Implement simple local cache to avoid repeated requests.
 
-Why it exists:
-- Avoids duplicating holiday logic in multiple places.
-- Allows swapping out the library/API later with minimal impact.
+API chosen:
+- BrasilAPI: https://brasilapi.com.br/api/feriados/v1/{year}
 
-Note:
-- This uses the 'holidays' library (offline).
-- If a public API is desired later, only this module needs to change.
+Notes:
+- If the API is unavailable, we fail fast by raising an exception.
+  (This is deliberate to keep compliance explicit; fallback behavior can be added if needed.)
 """
 
 from __future__ import annotations
 
-from datetime import date
+import json
+from datetime import date, datetime
+from pathlib import Path
 from typing import Iterable, Set
 
-import holidays
+import requests
+
+
+def _cache_path(year: int) -> Path:
+    return Path("data") / "cache" / f"holidays_br_{year}.json"
+
+
+def _ensure_cache_dir() -> None:
+    (Path("data") / "cache").mkdir(parents=True, exist_ok=True)
 
 
 def get_br_holidays(years: Iterable[int]) -> Set[date]:
     """
-    Returns a set of dates representing Brazilian national holidays
-    for the provided years.
-
-    Parameters:
-    - years: iterable of years (e.g. [2024, 2025, 2026])
-
-    Returns:
-    - set(date): national holiday dates
+    Fetch Brazilian national holidays for the given years using BrasilAPI.
+    Returns a set of `date` objects.
     """
     years_list = sorted(set(int(y) for y in years))
-    br = holidays.Brazil(years=years_list)
-    return set(br.keys())
+    holidays: Set[date] = set()
+
+    _ensure_cache_dir()
+
+    for y in years_list:
+        cp = _cache_path(y)
+
+        if cp.exists():
+            payload = json.loads(cp.read_text(encoding="utf-8"))
+        else:
+            url = f"https://brasilapi.com.br/api/feriados/v1/{y}"
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            payload = resp.json()
+            cp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # BrasilAPI returns items like: {"date":"2026-01-01","name":"Confraternização Universal","type":"national"}
+        for item in payload:
+            ds = item.get("date")
+            if not ds:
+                continue
+            try:
+                d = datetime.strptime(ds, "%Y-%m-%d").date()
+                holidays.add(d)
+            except Exception:
+                # ignore invalid dates from API response defensively
+                continue
+
+    return holidays
