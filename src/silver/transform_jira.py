@@ -30,6 +30,10 @@ import pandas as pd
 
 
 def _safe_get(obj: Any, path: List[Any]) -> Any:
+    """
+    Defensive navigation through nested dict/list structures.
+    Returns None if the path cannot be resolved.
+    """
     cur = obj
     for p in path:
         try:
@@ -45,24 +49,38 @@ def _safe_get(obj: Any, path: List[Any]) -> Any:
 
 
 def _first_non_null(*values: Any) -> Any:
+    """
+    Return the first value that is not None and not empty after string conversion.
+    """
     for v in values:
-        if v is not None and str(v).strip() != "":
-            return v
+        if v is None:
+            continue
+        if isinstance(v, str):
+            if v.strip() != "":
+                return v
+        else:
+            # for non-strings, accept as-is if not "empty-like"
+            if str(v).strip() != "":
+                return v
     return None
 
 
-def _parse_iso_utc(dt_str: str) -> Optional[str]:
+def _parse_iso_utc(dt_str: Any) -> Optional[str]:
     """
     Validate and normalize datetime string to ISO-8601 UTC with trailing 'Z'.
+    Accepts:
+    - '...Z'
+    - ISO with timezone offset
+    - naive ISO (assumed UTC)
     Returns normalized string or None if invalid.
     """
     if dt_str is None:
         return None
+
     s = str(dt_str).strip()
     if s == "":
         return None
 
-    # accept 'Z' or offset or naive; normalize to UTC
     try:
         if s.endswith("Z"):
             s2 = s[:-1]
@@ -74,42 +92,128 @@ def _parse_iso_utc(dt_str: str) -> Optional[str]:
                 dt = dt.replace(tzinfo=timezone.utc)
             else:
                 dt = dt.astimezone(timezone.utc)
+
+        # normalize: drop microseconds and enforce Z suffix
         return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
     except Exception:
         return None
 
 
-def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    issue_id = _first_non_null(_safe_get(issue, ["id"]), _safe_get(issue, ["issue_id"]))
-    issue_key = _first_non_null(_safe_get(issue, ["key"]), _safe_get(issue, ["issue_key"]))
+def _coerce_text(value: Any) -> str:
+    """
+    Normalize a field that may come as:
+    - str
+    - dict (common keys: name, displayName, value, id)
+    - list (take first element)
+    into a safe string.
+    """
+    if value is None:
+        return ""
 
-    status = _first_non_null(
+    if isinstance(value, str):
+        return value.strip()
+
+    if isinstance(value, dict):
+        v = (
+            value.get("displayName")
+            or value.get("name")
+            or value.get("value")
+            or value.get("label")
+            or value.get("id")
+        )
+        return str(v).strip() if v is not None else ""
+
+    if isinstance(value, list):
+        if len(value) == 0:
+            return ""
+        return _coerce_text(value[0])
+
+    return str(value).strip()
+
+
+def _coerce_assignee_name(value: Any) -> str:
+    """
+    Normalize assignee into a safe string.
+    Supported inputs:
+    - str
+    - dict (displayName/name/email/emailAddress)
+    - list of dicts/strings (take first)
+    """
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        return value.strip()
+
+    if isinstance(value, dict):
+        v = (
+            value.get("displayName")
+            or value.get("name")
+            or value.get("email")
+            or value.get("emailAddress")
+        )
+        return str(v).strip() if v else ""
+
+    if isinstance(value, list):
+        if len(value) == 0:
+            return ""
+        return _coerce_assignee_name(value[0])
+
+    return str(value).strip()
+
+
+def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract one normalized row from a single issue dict.
+    Returns None if created_at is invalid (compliance rule).
+    """
+    issue_id = _first_non_null(
+        _safe_get(issue, ["id"]),
+        _safe_get(issue, ["issue_id"]),
+    )
+
+    issue_key = _first_non_null(
+        _safe_get(issue, ["key"]),
+        _safe_get(issue, ["issue_key"]),
+    )
+
+    # status/priority/type can arrive as strings, dicts, or even lists in some payloads
+    status_raw = _first_non_null(
         _safe_get(issue, ["status"]),
         _safe_get(issue, ["fields", "status", "name"]),
         _safe_get(issue, ["fields", "status"]),
     )
-
-    priority = _first_non_null(
+    priority_raw = _first_non_null(
         _safe_get(issue, ["priority"]),
         _safe_get(issue, ["fields", "priority", "name"]),
         _safe_get(issue, ["fields", "priority"]),
-    ) or "Low"
-
-    issue_type = _first_non_null(
+    )
+    issue_type_raw = _first_non_null(
         _safe_get(issue, ["issue_type"]),
         _safe_get(issue, ["fields", "issuetype", "name"]),
         _safe_get(issue, ["fields", "issue_type"]),
     )
 
-    assignee_name = _first_non_null(
-        _safe_get(issue, ["assignee", "name"]),
+    status = _coerce_text(status_raw)
+    priority = _coerce_text(priority_raw) or "Low"
+    issue_type = _coerce_text(issue_type_raw)
+
+    # Assignee can be str/dict/list depending on source schema
+    assignee_raw = _first_non_null(
         _safe_get(issue, ["assignee", "displayName"]),
+        _safe_get(issue, ["assignee", "name"]),
+        _safe_get(issue, ["assignee", "email"]),
         _safe_get(issue, ["fields", "assignee", "displayName"]),
         _safe_get(issue, ["fields", "assignee", "name"]),
-        _safe_get(issue, ["assignee"]),
-        _safe_get(issue, ["fields", "assignee"]),
+        _safe_get(issue, ["fields", "assignee", "emailAddress"]),
+        _safe_get(issue, ["assignee"]),            # might be dict/list/string
+        _safe_get(issue, ["fields", "assignee"]),  # might be dict
+        _safe_get(issue, ["assignee", 0]),         # list case
         _safe_get(issue, ["assignee", 0, "name"]),
+        _safe_get(issue, ["assignee", 0, "email"]),
     )
+    assignee_name = _coerce_assignee_name(assignee_raw)
 
     created_raw = _first_non_null(
         _safe_get(issue, ["timestamps", 0, "created_at"]),
@@ -128,20 +232,21 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # compliance: drop records with invalid created_at
         return None
 
-    resolved_at = _parse_iso_utc(resolved_raw) if resolved_raw else None
-    # compliance: invalid resolved_at should become empty, not crash pipeline
-    if resolved_raw and resolved_at is None:
-        resolved_at = ""
+    resolved_at: str = ""
+    if resolved_raw:
+        parsed_resolved = _parse_iso_utc(resolved_raw)
+        # compliance: invalid resolved_at becomes empty (keeps record until Gold)
+        resolved_at = parsed_resolved if parsed_resolved is not None else ""
 
     return {
         "issue_id": issue_id,
         "issue_key": issue_key,
         "created_at": created_at,
-        "resolved_at": resolved_at or "",
-        "status": (status or "").strip(),
-        "priority": str(priority).strip(),
-        "issue_type": (issue_type or "").strip(),
-        "assignee_name": (assignee_name or "").strip(),
+        "resolved_at": resolved_at,
+        "status": status,
+        "priority": priority,
+        "issue_type": issue_type,
+        "assignee_name": assignee_name,
     }
 
 
