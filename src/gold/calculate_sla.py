@@ -145,17 +145,15 @@ def calculate_sla(
         .reset_index()
     )
     by_type["avg_resolution_hours"] = by_type["avg_resolution_hours"].round(2)
+    
+    # Canonical report (required by challenge)
     by_type.to_csv(report_by_type_path, index=False)
-
-    # Compatibility file (optional but useful): also write gold_sla_by_type.csv
-    compat_path = Path("data/gold/gold_sla_by_type.csv")
-    by_type.to_csv(compat_path, index=False)
 
     print(f"[GOLD] Rows: {len(gold_df)}")
     print(f"[GOLD] Generated: {gold_p}")
     print(f"[GOLD] Report analyst: {report_by_analyst_path}")
     print(f"[GOLD] Report type:    {report_by_type_path}")
-    print(f"[GOLD] Report type2:   {compat_path}")
+    
 
     return str(gold_p)
 
