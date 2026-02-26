@@ -1,0 +1,7 @@
+pandas
+python-dotenv
+azure-storage-blob
+azure-identity
+holidays
+openpyxl
+requests
