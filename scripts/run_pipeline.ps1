@@ -5,16 +5,16 @@ param(
 
 # ================================================================
 # SCRIPT: run_pipeline.ps1
-# OBJECTIVE:
-# - Execute the Medallion pipeline (Bronze -> Silver -> Gold)
-# - "step" mode (default): run and validate each layer separately
+# GOAL:
+# - Run Medallion pipeline (Bronze -> Silver -> Gold)
+# - "step" mode (default): run each layer and validate immediately
 # - "full" mode: run main.py (if present) and validate at the end
 #
 # PRINCIPLES:
-# - Fail fast: stop immediately on error with clear message
-# - 3+ validations per step (environment, execution, artifacts/contract)
-# - Ensure PYTHONPATH at project root for "src.*" imports
-# - Avoid python -c for complex validations (use dedicated scripts)
+# - Fail fast with clear messages
+# - 3+ validations per stage (env, execution, artifacts/contract)
+# - Ensure PYTHONPATH is set to project root for 'src.*' imports
+# - Avoid complex validations via python -c; use dedicated scripts
 # ================================================================
 
 Set-StrictMode -Version Latest
@@ -40,8 +40,6 @@ function CheckFileNotEmpty([string]$Path, [string]$Context) {
 }
 
 function RunPython([string[]]$PyArgs, [string]$Context) {
-    # Avoid conflict with automatic $Args variable in PowerShell:
-    # use $PyArgs as the array of arguments for python.
     Write-Host "RUN: python $($PyArgs -join ' ')"
     & python @PyArgs
     if ($LASTEXITCODE -ne 0) {
@@ -50,14 +48,14 @@ function RunPython([string[]]$PyArgs, [string]$Context) {
 }
 
 # ------------------------------------------------
-# Validation 1 (global): ensure project root
+# Global validation 1: project root
 # ------------------------------------------------
 if (-not (Test-Path ".\src")) {
-    Fail "Project root not detected. Ensure you are running from the project root where .\src exists."
+    Fail "Project root not detected. Run this script from the project root (where .\src exists)."
 }
 
 # ------------------------------------------------
-# Validation 2 (global): python is accessible
+# Global validation 2: python available
 # ------------------------------------------------
 try {
     $py = (Get-Command python).Source
@@ -67,8 +65,8 @@ try {
 }
 
 # ------------------------------------------------
-# Validation 3 (global): set PYTHONPATH to root
-# This resolves: ModuleNotFoundError: No module named 'src'
+# Global validation 3: set PYTHONPATH to root
+# Fixes: ModuleNotFoundError: No module named 'src'
 # ------------------------------------------------
 $env:PYTHONPATH = (Get-Location).Path
 Write-Host "PYTHONPATH set to: $env:PYTHONPATH"
@@ -83,19 +81,20 @@ $SilverFile = ".\data\silver\silver_jira.csv"
 
 $GoldFile = ".\data\gold\gold_jira_sla.csv"
 $GoldReportAnalyst = ".\data\gold\gold_sla_by_analyst.csv"
-$GoldReportType = ".\data\gold\gold_sla_by_type.csv"
-$GoldReportType2 = ".\data\gold\gold_sla_by_issue_type.csv"
+
+# IMPORTANT: keep only the canonical report file
+$GoldReportIssueType = ".\data\gold\gold_sla_by_issue_type.csv"
 
 # ------------------------------------------------
 # Execution
 # ------------------------------------------------
 if ($Mode -eq "full") {
 
-    # Full mode: use main.py (if present)
+    # FULL mode uses main.py (if present)
     CheckFileExists ".\main.py" "FULL"
     RunPython @(".\main.py") "FULL"
 
-    # Final validations (main artifacts)
+    # Final validations (fail-fast)
     CheckFileNotEmpty $BronzeFile "FULL-BRONZE"
     CheckFileExists $BronzeEvidence "FULL-BRONZE-EVIDENCE"
     RunPython @(".\scripts\validate_bronze.py") "FULL-BRONZE-VALIDATOR"
@@ -105,7 +104,7 @@ if ($Mode -eq "full") {
 
     CheckFileExists $GoldFile "FULL-GOLD"
     CheckFileExists $GoldReportAnalyst "FULL-GOLD-REPORT-ANALYST"
-    CheckFileExists $GoldReportType "FULL-GOLD-REPORT-TYPE"
+    CheckFileExists $GoldReportIssueType "FULL-GOLD-REPORT-ISSUE-TYPE"
     RunPython @(".\scripts\validate_gold.py") "FULL-GOLD-VALIDATOR"
 
     Write-Host "Pipeline FULL completed successfully."
@@ -113,16 +112,16 @@ if ($Mode -eq "full") {
 }
 
 # ================================================================
-# STEP mode (default) - execute step-by-step with fail-fast
+# STEP mode (default) - stage-by-stage with validations
 # ================================================================
 
 # -----------------------------
 # STEP 1: Bronze
 # Validations:
 # 1) Script execution
-# 2) Artifact exists and is not empty
-# 3) Bronze contract ok (validate_bronze.py)
-# 4) Source evidence exists (azure vs fallback)
+# 2) Artifact exists and not empty
+# 3) Bronze contract validator
+# 4) Source evidence exists (Azure vs fallback)
 # -----------------------------
 Write-Host "STEP 1/3 - BRONZE"
 
@@ -131,7 +130,7 @@ CheckFileNotEmpty $BronzeFile "BRONZE-ARTIFACT"
 CheckFileExists $BronzeEvidence "BRONZE-EVIDENCE"
 RunPython @(".\scripts\validate_bronze.py") "BRONZE-VALIDATOR"
 
-# Extra validation: source recorded (if the script exists)
+# Optional: explicit source validation script
 if (Test-Path ".\scripts\validate_bronze_source.py") {
     RunPython @(".\scripts\validate_bronze_source.py") "BRONZE-SOURCE-VALIDATOR"
 } else {
@@ -141,14 +140,14 @@ if (Test-Path ".\scripts\validate_bronze_source.py") {
 # -----------------------------
 # STEP 2: Silver
 # Validations:
-# 1) Script execution
-# 2) Artifact exists
-# 3) Silver contract ok (validate_silver.py)
-# 4) File contains expected header (first line)
+# 1) Controlled reset (avoid stale data)
+# 2) Script execution
+# 3) Artifact exists
+# 4) Silver contract validator
+# 5) Header sanity check
 # -----------------------------
 Write-Host "STEP 2/3 - SILVER"
 
-# Controlled reset of Silver file (avoids previous run cache)
 if (Test-Path $SilverFile) {
     Remove-Item $SilverFile -Force
     Write-Host "Removed old Silver file: $SilverFile"
@@ -158,33 +157,31 @@ RunPython @(".\src\silver\transform_jira.py") "SILVER-RUN"
 CheckFileExists $SilverFile "SILVER-ARTIFACT"
 RunPython @(".\scripts\validate_silver.py") "SILVER-VALIDATOR"
 
-# Extra validation: CSV header
 $header = (Get-Content $SilverFile -TotalCount 1)
-if ($header -notmatch "issue_id" -or $header -notmatch "created") {
+if ($header -notmatch "issue_id" -or $header -notmatch "created_at") {
     Fail "SILVER-HEADER - missing expected columns in header"
 }
 
 # -----------------------------
 # STEP 3: Gold
 # Validations:
-# 1) Script execution
-# 2) Artifacts exist (gold + reports)
-# 3) Gold contract ok (validate_gold.py)
-# 4) Alternate by-type report (gold_sla_by_issue_type.csv) exists
+# 1) Controlled reset
+# 2) Script execution
+# 3) Artifacts exist (gold + required reports)
+# 4) Gold contract validator
 # -----------------------------
 Write-Host "STEP 3/3 - GOLD"
 
-# Controlled reset of Gold
 if (Test-Path $GoldFile) { Remove-Item $GoldFile -Force }
 if (Test-Path $GoldReportAnalyst) { Remove-Item $GoldReportAnalyst -Force }
-if (Test-Path $GoldReportType) { Remove-Item $GoldReportType -Force }
-if (Test-Path $GoldReportType2) { Remove-Item $GoldReportType2 -Force }
+if (Test-Path $GoldReportIssueType) { Remove-Item $GoldReportIssueType -Force }
 
 RunPython @(".\src\gold\calculate_sla.py") "GOLD-RUN"
+
 CheckFileExists $GoldFile "GOLD-ARTIFACT"
 CheckFileExists $GoldReportAnalyst "GOLD-REPORT-ANALYST"
-CheckFileExists $GoldReportType "GOLD-REPORT-TYPE"
-CheckFileExists $GoldReportType2 "GOLD-REPORT-TYPE-ALT"
+CheckFileExists $GoldReportIssueType "GOLD-REPORT-TYPE"
+
 RunPython @(".\scripts\validate_gold.py") "GOLD-VALIDATOR"
 
 Write-Host "Pipeline STEP completed successfully."
