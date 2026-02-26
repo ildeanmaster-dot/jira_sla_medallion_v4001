@@ -1,35 +1,28 @@
 """
 transform_jira.py (Silver)
-Objective:
-- Read Bronze JSON (faithful copy) and normalize into a "lean" CSV table focused on SLA.
+Purpose:
+- Read Bronze JSON and normalize nested structure into a slim CSV for SLA analysis.
+- Clean/standardize columns and validate ISO datetime fields.
 
-Output contract (columns):
+Output (Silver) columns (snake_case):
 - issue_id
 - issue_key
-- created
-- resolved
+- created_at
+- resolved_at
 - status
 - priority
 - issue_type
-- assignee
+- assignee_name
 
-Rules:
-- Silver does cleaning/normalization but DOES NOT apply SLA business rules (that is Gold).
-- Should be robust for nested JSON and missing fields.
-- created is mandatory: records without created should be ignored.
-- Keep Open/In progress items (Gold filters later).
-
-Supported Bronze input:
-- dict with key "issues" (list)
-- or direct list of issues
-
-Note:
-- Avoid pd.read_json to prevent schema surprises.
+Date rules (compliance):
+- If created_at is invalid -> drop the record.
+- If resolved_at is invalid -> set to empty (keep until Gold, where Done/Resolved requires resolved_at).
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -37,11 +30,6 @@ import pandas as pd
 
 
 def _safe_get(obj: Any, path: List[Any]) -> Any:
-    """
-    Safely access a path in a dict/list structure.
-    path may contain keys (str) and indices (int).
-    Returns None if navigation fails.
-    """
     cur = obj
     for p in path:
         try:
@@ -63,20 +51,37 @@ def _first_non_null(*values: Any) -> Any:
     return None
 
 
-def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _parse_iso_utc(dt_str: str) -> Optional[str]:
     """
-    Extract a normalized row from a single issue.
-    Returns None if created is invalid/missing.
+    Validate and normalize datetime string to ISO-8601 UTC with trailing 'Z'.
+    Returns normalized string or None if invalid.
     """
-    issue_id = _first_non_null(
-        _safe_get(issue, ["id"]),
-        _safe_get(issue, ["issue_id"]),
-    )
+    if dt_str is None:
+        return None
+    s = str(dt_str).strip()
+    if s == "":
+        return None
 
-    issue_key = _first_non_null(
-        _safe_get(issue, ["key"]),
-        _safe_get(issue, ["issue_key"]),
-    )
+    # accept 'Z' or offset or naive; normalize to UTC
+    try:
+        if s.endswith("Z"):
+            s2 = s[:-1]
+            dt = datetime.fromisoformat(s2)
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+        return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
+def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    issue_id = _first_non_null(_safe_get(issue, ["id"]), _safe_get(issue, ["issue_id"]))
+    issue_key = _first_non_null(_safe_get(issue, ["key"]), _safe_get(issue, ["issue_key"]))
 
     status = _first_non_null(
         _safe_get(issue, ["status"]),
@@ -88,7 +93,7 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _safe_get(issue, ["priority"]),
         _safe_get(issue, ["fields", "priority", "name"]),
         _safe_get(issue, ["fields", "priority"]),
-    )
+    ) or "Low"
 
     issue_type = _first_non_null(
         _safe_get(issue, ["issue_type"]),
@@ -96,7 +101,6 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _safe_get(issue, ["fields", "issue_type"]),
     )
 
-    # Assignee may come as dict, string, or list (in custom schema)
     assignee_name = _first_non_null(
         _safe_get(issue, ["assignee", "name"]),
         _safe_get(issue, ["assignee", "displayName"]),
@@ -105,51 +109,46 @@ def _extract_issue_row(issue: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _safe_get(issue, ["assignee"]),
         _safe_get(issue, ["fields", "assignee"]),
         _safe_get(issue, ["assignee", 0, "name"]),
-        _safe_get(issue, ["assignee", 0, "email"]),
     )
 
-    # Timestamps (custom schema of the challenge): timestamps[0].created_at / resolved_at
-    created = _first_non_null(
+    created_raw = _first_non_null(
         _safe_get(issue, ["timestamps", 0, "created_at"]),
         _safe_get(issue, ["created"]),
         _safe_get(issue, ["fields", "created"]),
     )
-
-    resolved = _first_non_null(
+    resolved_raw = _first_non_null(
         _safe_get(issue, ["timestamps", 0, "resolved_at"]),
         _safe_get(issue, ["resolved"]),
         _safe_get(issue, ["fields", "resolutiondate"]),
         _safe_get(issue, ["fields", "resolved"]),
     )
 
-    # created is mandatory for SLA
-    if created is None:
+    created_at = _parse_iso_utc(created_raw)
+    if created_at is None:
+        # compliance: drop records with invalid created_at
         return None
 
-    row = {
+    resolved_at = _parse_iso_utc(resolved_raw) if resolved_raw else None
+    # compliance: invalid resolved_at should become empty, not crash pipeline
+    if resolved_raw and resolved_at is None:
+        resolved_at = ""
+
+    return {
         "issue_id": issue_id,
         "issue_key": issue_key,
-        "created": created,
-        "resolved": resolved,
-        "status": status,
-        "priority": (priority or "Low"),
-        "issue_type": issue_type,
-        "assignee": assignee_name,
+        "created_at": created_at,
+        "resolved_at": resolved_at or "",
+        "status": (status or "").strip(),
+        "priority": str(priority).strip(),
+        "issue_type": (issue_type or "").strip(),
+        "assignee_name": (assignee_name or "").strip(),
     }
-
-    return row
 
 
 def transform_jira(
     bronze_path: str = "data/bronze/bronze_jira.json",
     silver_path: str = "data/silver/silver_jira.csv",
 ) -> str:
-    """
-    Execute the Silver transformation:
-    - Read Bronze JSON
-    - Extract normalized rows
-    - Save Silver CSV
-    """
     bronze_p = Path(bronze_path)
     if not bronze_p.exists():
         raise FileNotFoundError(f"Bronze file not found: {bronze_path}")
@@ -174,20 +173,19 @@ def transform_jira(
 
     df = pd.DataFrame(rows)
 
-    # Ensure expected columns exist (even if empty)
     expected_cols = [
         "issue_id",
         "issue_key",
-        "created",
-        "resolved",
+        "created_at",
+        "resolved_at",
         "status",
         "priority",
         "issue_type",
-        "assignee",
+        "assignee_name",
     ]
     for c in expected_cols:
         if c not in df.columns:
-            df[c] = None
+            df[c] = ""
 
     df = df[expected_cols]
 
